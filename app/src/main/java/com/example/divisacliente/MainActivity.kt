@@ -9,10 +9,13 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.Text
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -39,38 +42,46 @@ class MainActivity : ComponentActivity() {
 }
 
 /**
- * Consulta el ContentProvider y retorna un State con la lista de monedas únicas.
+ * Obtiene la lista de monedas únicas desde el ContentProvider.
  */
 @Composable
 fun distinctCurrencies(): State<List<String>> {
     val context = LocalContext.current
-    return produceState(initialValue = emptyList<String>()) {
+    return produceState(initialValue = emptyList()) {
         val providerUri = Uri.parse("content://com.example.divisa.provider/exchange_rates")
         val cursor: Cursor? = context.contentResolver.query(
             providerUri,
             arrayOf("currency"), // Solo la columna "currency"
             null,
             null,
-            null
+            "currency ASC"
         )
+
         val currencySet = mutableSetOf<String>()
-        cursor?.use { cur ->
-            if (cur.moveToFirst()) {
-                do {
-                    val currency = cur.getString(cur.getColumnIndex("currency"))
+        cursor?.use {
+            val columnIndex = it.getColumnIndex("currency")
+            if (columnIndex != -1) {
+                while (it.moveToNext()) {
+                    val currency = it.getString(columnIndex)
                     if (!currency.isNullOrBlank()) {
                         currencySet.add(currency)
                     }
-                } while (cur.moveToNext())
+                }
+            } else {
+                Log.e(
+                    "distinctCurrencies",
+                    "La columna 'currency' no existe. Columnas disponibles: ${
+                        cursor.columnNames.joinToString()
+                    }"
+                )
             }
         }
         value = currencySet.toList()
-        Log.d("distinctCurrencies", "Monedas encontradas: $value")
     }
 }
 
 /**
- * Selector de rango de fechas usando DatePickerDialog.
+ * Selector de rango de fechas con DatePickerDialog.
  */
 @Composable
 fun DateRangeSelector(
@@ -84,20 +95,14 @@ fun DateRangeSelector(
     var showStartPicker by remember { mutableStateOf(false) }
     var showEndPicker by remember { mutableStateOf(false) }
 
-    Column(modifier = Modifier.fillMaxWidth()) {
+    Column(modifier = Modifier.fillMaxWidth().padding(8.dp)) {
         Text(
             text = "Fecha de inicio: ${dateFormat.format(Date(startDate))}",
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable { showStartPicker = true }
-                .padding(8.dp)
+            modifier = Modifier.clickable { showStartPicker = true }
         )
         Text(
             text = "Fecha de fin: ${dateFormat.format(Date(endDate))}",
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable { showEndPicker = true }
-                .padding(8.dp)
+            modifier = Modifier.clickable { showEndPicker = true }
         )
     }
 
@@ -117,6 +122,7 @@ fun DateRangeSelector(
             calendar.get(Calendar.DAY_OF_MONTH)
         ).show()
     }
+
     if (showEndPicker) {
         val calendar = Calendar.getInstance().apply { timeInMillis = endDate }
         DatePickerDialog(
@@ -136,55 +142,98 @@ fun DateRangeSelector(
 }
 
 /**
- * Selector de moneda: muestra un Dropdown con las monedas disponibles.
+ * Selector de moneda con BottomSheet y campo de búsqueda.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CurrencySelector(
     currencies: List<String>,
     selectedCurrency: String,
     onCurrencySelected: (String) -> Unit
 ) {
-    var expanded by remember { mutableStateOf(false) }
-    Box(modifier = Modifier
-        .fillMaxWidth()
-        .clickable { expanded = true }
-        .padding(vertical = 8.dp)
+    var showSheet by remember { mutableStateOf(false) }
+    var searchQuery by remember { mutableStateOf("") }
+
+    val filteredCurrencies = currencies.filter { it.contains(searchQuery, ignoreCase = true) }
+
+    // Botón (Surface) que muestra la divisa seleccionada y abre la hoja modal
+    Surface(
+        shape = MaterialTheme.shapes.medium,
+        tonalElevation = 2.dp,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { showSheet = true }
+            .padding(horizontal = 16.dp, vertical = 8.dp)
     ) {
-        Text(text = "Moneda seleccionada: $selectedCurrency")
-        DropdownMenu(
-            expanded = expanded,
-            onDismissRequest = { expanded = false }
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
         ) {
-            currencies.forEach { currency ->
-                DropdownMenuItem(
-                    text = { Text(currency) },
-                    onClick = {
-                        onCurrencySelected(currency)
-                        expanded = false
-                    }
+            Text(text = selectedCurrency, modifier = Modifier.weight(1f))
+            Icon(
+                imageVector = Icons.Default.ArrowDropDown,
+                contentDescription = "Seleccionar divisa"
+            )
+        }
+    }
+
+    // ModalBottomSheet para mostrar la lista de divisas filtrables
+    if (showSheet) {
+        ModalBottomSheet(onDismissRequest = { showSheet = false }) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text(
+                    text = "Selecciona una divisa",
+                    style = MaterialTheme.typography.titleLarge
                 )
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    label = { Text("Buscar divisa") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
+                )
+                LazyColumn {
+                    items(filteredCurrencies) { currency ->
+                        ListItem(
+                            headlineContent = { Text(currency) },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    onCurrencySelected(currency)
+                                    showSheet = false
+                                }
+                                .padding(12.dp)
+                        )
+                        Divider()
+                    }
+                }
+                TextButton(
+                    onClick = { showSheet = false },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp)
+                ) {
+                    Text("Cancelar")
+                }
             }
         }
     }
 }
 
 /**
- * Pantalla principal que muestra el selector de moneda, el selector de fechas y el gráfico.
+ * Pantalla principal: Selector de moneda, selector de fechas y el gráfico.
  */
 @Composable
 fun MainScreen() {
-    val currencies by distinctCurrencies() // Consulta dinámica de monedas
-    // Estado para la moneda seleccionada: si no hay monedas, por defecto "USD"
+    val currencies by distinctCurrencies()
     var selectedCurrency by remember { mutableStateOf(if (currencies.isNotEmpty()) currencies.first() else "USD") }
-
-    // Estados para el rango de fechas (por defecto: últimos 7 días)
     var startDate by remember { mutableStateOf(System.currentTimeMillis() - 7 * 24 * 60 * 60 * 1000L) }
     var endDate by remember { mutableStateOf(System.currentTimeMillis()) }
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         Text("Gráfico de Tasa de Cambio (App Cliente)")
 
-        // Selector de moneda
+        // Selector de moneda (usa la versión con BottomSheet y búsqueda)
         if (currencies.isNotEmpty()) {
             CurrencySelector(
                 currencies = currencies,
@@ -203,7 +252,7 @@ fun MainScreen() {
             onEndDateChanged = { endDate = it }
         )
 
-        // Gráfico: ocupa el resto de la pantalla
+        // Gráfico
         ExchangeRateChartClient(
             currency = selectedCurrency,
             startDate = startDate,
@@ -229,13 +278,12 @@ fun ExchangeRateChartClient(
 
     // URI del ContentProvider de la App A
     val providerUri = Uri.parse("content://com.example.divisa.provider/exchange_rates")
+
     // Filtro: currency = ? AND timestamp BETWEEN ? AND ?
     val selection = "currency = ? AND timestamp BETWEEN ? AND ?"
     val selectionArgs = arrayOf(currency, startDate.toString(), endDate.toString())
 
-    Log.d("ExchangeRateChartClient", "startDate original: $startDate, convertido: ${(startDate / 1000)}")
-    Log.d("ExchangeRateChartClient", "endDate original: $endDate, convertido: ${(endDate / 1000)}")
-
+    Log.d("ExchangeRateChartClient", "startDate: $startDate, endDate: $endDate")
 
     // Consulta asíncrona del ContentProvider
     val cursorState = produceState<Cursor?>(initialValue = null, key1 = currency, key2 = startDate, key3 = endDate) {
@@ -256,16 +304,18 @@ fun ExchangeRateChartClient(
         val timestamps = mutableListOf<Long>()
         val rates = mutableListOf<Double>()
 
-        cursorState.value?.let { cursor ->
+        cursorState.value?.use { cursor ->
             val timestampIndex = cursor.getColumnIndex("timestamp")
             val rateIndex = cursor.getColumnIndex("rate")
-            if (cursor.moveToFirst()) {
-                do {
+            if (timestampIndex != -1 && rateIndex != -1) {
+                while (cursor.moveToNext()) {
                     val ts = cursor.getLong(timestampIndex)
                     val r = cursor.getDouble(rateIndex)
                     timestamps.add(ts)
                     rates.add(r)
-                } while (cursor.moveToNext())
+                }
+            } else {
+                Log.e("ExchangeRateChartClient", "Columnas 'timestamp' o 'rate' no encontradas")
             }
         }
 
@@ -274,58 +324,59 @@ fun ExchangeRateChartClient(
             val minTimestamp = timestamps.minOrNull() ?: 0L
             for (i in timestamps.indices) {
                 val diffMillis = timestamps[i] - minTimestamp
-                val xValue = (diffMillis / 1000f) / (60f * 60f) // Convertir de segundos a horas
+                val xValue = (diffMillis / 1000f) / (60f * 60f) // Convertir de ms a horas
                 val yValue = rates[i].toFloat()
-
                 listOfEntries.add(Entry(xValue, yValue))
             }
         }
 
-        // LOG para depuración
+        // Log de depuración
         listOfEntries.forEachIndexed { index, entry ->
             Log.d("ExchangeRateChartClient", "Punto $index -> X: ${entry.x}, Y: ${entry.y}")
         }
 
-
         listOfEntries
     }
 
-    // Graficar
+    // Graficar en un AndroidView
     Box(modifier = modifier) {
         AndroidView(
-            factory = { ctx -> LineChart(ctx).apply {
-                setBackgroundColor(android.graphics.Color.LTGRAY)
-                // Configuraciones iniciales (ejes, zoom, etc.) que no dependen de los datos
-                xAxis.setDrawGridLines(true)
-                axisLeft.setDrawGridLines(true)
-                axisRight.setDrawGridLines(true)
-                description.isEnabled = false
-                setAutoScaleMinMaxEnabled(true)
-                setPinchZoom(true)
-                isDragEnabled = true
-                xAxis.position = XAxis.XAxisPosition.BOTTOM
-                xAxis.valueFormatter = object : ValueFormatter() {
-                    override fun getFormattedValue(value: Float): String {
-                        return "${value.toInt()}h"
+            factory = { ctx ->
+                // Se crea el LineChart una sola vez
+                LineChart(ctx).apply {
+                    setBackgroundColor(android.graphics.Color.LTGRAY)
+                    xAxis.setDrawGridLines(true)
+                    axisLeft.setDrawGridLines(true)
+                    axisRight.setDrawGridLines(true)
+                    description.isEnabled = false
+                    setAutoScaleMinMaxEnabled(true)
+                    setPinchZoom(true)
+                    isDragEnabled = true
+                    xAxis.position = XAxis.XAxisPosition.BOTTOM
+                    xAxis.valueFormatter = object : ValueFormatter() {
+                        override fun getFormattedValue(value: Float): String {
+                            return "${value.toInt()}h"
+                        }
                     }
                 }
-            } },
+            },
             update = { chart ->
-                // Crear o actualizar el dataset con las nuevas entradas
+                // Actualiza los datos del gráfico
                 val dataSet = LineDataSet(entries, "Tasa de $currency vs MXN").apply {
                     setDrawCircles(true)
                     setDrawValues(true)
-                    circleRadius = 2f  // 🔴 Tamaño grande para ver mejor los punto
-                    lineWidth = 1f      // 🔵 Línea más gruesa
+                    circleRadius = 3f
+                    lineWidth = 2f
                     color = android.graphics.Color.RED
                     setCircleColor(android.graphics.Color.BLACK)
                     setDrawFilled(true)
-                    fillColor = android.graphics.Color.BLUE //RELLENO HACIA ABAJO DE LA GRAFICA
+                    fillColor = android.graphics.Color.BLUE
                     fillAlpha = 120
                 }
+
                 chart.data = LineData(dataSet)
 
-                // Configurar los límites de los ejes dinámicamente según las entradas
+                // Ajustar ejes si hay datos
                 if (entries.isNotEmpty()) {
                     val minX = entries.minOf { it.x }
                     val maxX = entries.maxOf { it.x }
@@ -352,8 +403,5 @@ fun ExchangeRateChartClient(
             },
             modifier = Modifier.fillMaxSize()
         )
-
     }
 }
-
-

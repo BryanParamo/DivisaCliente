@@ -230,8 +230,9 @@ fun ExchangeRateChartClient(
     // URI del ContentProvider de la App A
     val providerUri = Uri.parse("content://com.example.divisa.provider/exchange_rates")
     // Filtro: currency = ? AND timestamp BETWEEN ? AND ?
-    val selection = "currency = ?"
-    val selectionArgs = arrayOf(currency)
+    val selection = "currency = ? AND timestamp BETWEEN ? AND ?"
+    val selectionArgs = arrayOf(currency, startDate.toString(), endDate.toString())
+
     Log.d("ExchangeRateChartClient", "startDate original: $startDate, convertido: ${(startDate / 1000)}")
     Log.d("ExchangeRateChartClient", "endDate original: $endDate, convertido: ${(endDate / 1000)}")
 

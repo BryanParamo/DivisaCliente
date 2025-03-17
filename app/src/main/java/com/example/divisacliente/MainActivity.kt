@@ -230,8 +230,11 @@ fun ExchangeRateChartClient(
     // URI del ContentProvider de la App A
     val providerUri = Uri.parse("content://com.example.divisa.provider/exchange_rates")
     // Filtro: currency = ? AND timestamp BETWEEN ? AND ?
-    val selection = "currency = ? AND timestamp BETWEEN ? AND ?"
-    val selectionArgs = arrayOf(currency, startDate.toString(), endDate.toString())
+    val selection = "currency = ?"
+    val selectionArgs = arrayOf(currency)
+    Log.d("ExchangeRateChartClient", "startDate original: $startDate, convertido: ${(startDate / 1000)}")
+    Log.d("ExchangeRateChartClient", "endDate original: $endDate, convertido: ${(endDate / 1000)}")
+
 
     // Consulta asíncrona del ContentProvider
     val cursorState = produceState<Cursor?>(initialValue = null, key1 = currency, key2 = startDate, key3 = endDate) {
@@ -245,7 +248,6 @@ fun ExchangeRateChartClient(
         Log.d("ExchangeRateChartClient", "Cursor count: ${c?.count ?: 0}")
         value = c
     }
-
 
     // Convertir el Cursor en una lista de Entry (X = tiempo, Y = rate)
     val entries = remember(cursorState.value) {
@@ -266,69 +268,91 @@ fun ExchangeRateChartClient(
             }
         }
 
+        // Convertir timestamp de milisegundos a horas desde el primer registro
         if (timestamps.isNotEmpty()) {
             val minTimestamp = timestamps.minOrNull() ?: 0L
             for (i in timestamps.indices) {
                 val diffMillis = timestamps[i] - minTimestamp
-                // Convertir milisegundos a horas (ajusta a minutos o segundos si prefieres)
-                val xValue = diffMillis.toFloat() / (1000f * 60f * 60f)
+                val xValue = (diffMillis / 1000f) / (60f * 60f) // Convertir de segundos a horas
                 val yValue = rates[i].toFloat()
+
                 listOfEntries.add(Entry(xValue, yValue))
             }
-            listOfEntries.forEachIndexed { index, entry ->
-                Log.d("ExchangeRateChartClient", "Entry #$index -> x=${entry.x}, y=${entry.y}")
-            }
         }
+
+        // LOG para depuración
+        listOfEntries.forEachIndexed { index, entry ->
+            Log.d("ExchangeRateChartClient", "Punto $index -> X: ${entry.x}, Y: ${entry.y}")
+        }
+
+
         listOfEntries
     }
 
     // Graficar
     Box(modifier = modifier) {
         AndroidView(
-            factory = { ctx ->
-                LineChart(ctx).apply {
-                    setBackgroundColor(android.graphics.Color.LTGRAY)
-
-                    val dataSet = LineDataSet(entries, "Tasa de $currency vs MXN").apply {
-                        setDrawCircles(true)
-                        setDrawValues(true)
-                        circleRadius = 10f
-                        lineWidth = 5f
-                        color = android.graphics.Color.MAGENTA
-                        setCircleColor(android.graphics.Color.YELLOW)
-                        setDrawFilled(true)
-                        fillColor = android.graphics.Color.CYAN
-                        fillAlpha = 100
+            factory = { ctx -> LineChart(ctx).apply {
+                setBackgroundColor(android.graphics.Color.LTGRAY)
+                // Configuraciones iniciales (ejes, zoom, etc.) que no dependen de los datos
+                xAxis.setDrawGridLines(true)
+                axisLeft.setDrawGridLines(true)
+                axisRight.setDrawGridLines(true)
+                description.isEnabled = false
+                setAutoScaleMinMaxEnabled(true)
+                setPinchZoom(true)
+                isDragEnabled = true
+                xAxis.position = XAxis.XAxisPosition.BOTTOM
+                xAxis.valueFormatter = object : ValueFormatter() {
+                    override fun getFormattedValue(value: Float): String {
+                        return "${value.toInt()}h"
                     }
-                    data = LineData(dataSet)
-                    notifyDataSetChanged()
-                    invalidate()
-
-
-                    xAxis.setDrawGridLines(true)
-                    axisLeft.setDrawGridLines(true)
-                    axisRight.setDrawGridLines(true)
-
-                    // Deja que el gráfico autoescale el eje Y, o fija un rango si lo prefieres:
-                    // axisLeft.axisMinimum = 0.9f
-                    // axisLeft.axisMaximum = 1.1f
-                    // axisRight.axisMinimum = 0.9f
-                    // axisRight.axisMaximum = 1.1f
-
-                    description.isEnabled = false
-                    setAutoScaleMinMaxEnabled(true)
-                    setPinchZoom(true)
-                    xAxis.position = XAxis.XAxisPosition.BOTTOM
-
-                    xAxis.valueFormatter = object : ValueFormatter() {
-                        override fun getFormattedValue(value: Float): String {
-                            return "${value.toInt()}h"
-                        }
-                    }
-                    invalidate()
                 }
+            } },
+            update = { chart ->
+                // Crear o actualizar el dataset con las nuevas entradas
+                val dataSet = LineDataSet(entries, "Tasa de $currency vs MXN").apply {
+                    setDrawCircles(true)
+                    setDrawValues(true)
+                    circleRadius = 2f  // 🔴 Tamaño grande para ver mejor los punto
+                    lineWidth = 1f      // 🔵 Línea más gruesa
+                    color = android.graphics.Color.RED
+                    setCircleColor(android.graphics.Color.BLACK)
+                    setDrawFilled(true)
+                    fillColor = android.graphics.Color.BLUE //RELLENO HACIA ABAJO DE LA GRAFICA
+                    fillAlpha = 120
+                }
+                chart.data = LineData(dataSet)
+
+                // Configurar los límites de los ejes dinámicamente según las entradas
+                if (entries.isNotEmpty()) {
+                    val minX = entries.minOf { it.x }
+                    val maxX = entries.maxOf { it.x }
+                    chart.xAxis.axisMinimum = minX
+                    chart.xAxis.axisMaximum = maxX
+
+                    val minY = entries.minOf { it.y }
+                    val maxY = entries.maxOf { it.y }
+                    if (minY == maxY) {
+                        chart.axisLeft.axisMinimum = minY * 0.95f
+                        chart.axisLeft.axisMaximum = maxY * 1.05f
+                        chart.axisRight.axisMinimum = minY * 0.95f
+                        chart.axisRight.axisMaximum = maxY * 1.05f
+                    } else {
+                        chart.axisLeft.axisMinimum = minY
+                        chart.axisLeft.axisMaximum = maxY
+                        chart.axisRight.axisMinimum = minY
+                        chart.axisRight.axisMaximum = maxY
+                    }
+                }
+
+                chart.notifyDataSetChanged()
+                chart.invalidate()
             },
             modifier = Modifier.fillMaxSize()
         )
+
     }
 }
+
+
